@@ -1,0 +1,349 @@
+---
+title: "Logistic models, calcs and plots"
+author: "Kai Pacey"
+date: "2023-10-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### GBR model 
+
+```{r}
+
+prob.outcomes.fix <- prob.outcomes %>% 
+  #filter(fishing_mortality != 0) %>% 
+  mutate(fishing_mortality = as.numeric(fishing_mortality), 
+         total.reef.area.m2 = as.numeric(total.reef.area.m2), 
+         max.biomass.pm2 = as.numeric(max.biomass.pm2), 
+         average.biomass.pm2 = as.numeric(average.biomass.pm2))
+
+
+prob.outcomes
+
+priors1 <- prior(normal(0, 1500), class = "Intercept") +
+  prior(normal(0,200000), class = "b")
+
+get_prior(collapse|trials(1000) ~
+                 scale(fishing_mortality) + 
+                 scale(total.reef.area.m2) + 
+                 scale(max.biomass.pm2) + 
+                 scale(average.biomass.pm2), 
+               family = binomial(link = "logit"), 
+          data = prob.outcomes.fix)
+
+priors <- prior(normal(0, 3000), class = "Intercept") +
+  prior(normal(0,1000000), class = "b")
+
+GBR.form <- bf(collapse|trials(1000) ~
+                 scale(fishing_mortality) + 
+                 scale(total.reef.area.m2) + 
+                 scale(max.biomass.pm2) + 
+                 scale(average.biomass.pm2), 
+               family = binomial(link = "logit"))
+
+GBR.logistic <- brm(GBR.form, 
+                prior = priors1, 
+                iter = 18000, 
+                warmup = 800, 
+                thin = 10, 
+                cores = 3, 
+                chains = 3, 
+                save_all_pars = T, 
+                data = prob.outcomes.fix,
+                control = list(adapt_delta = 0.99,
+                               max_treedepth= 15),
+                refresh = 0, 
+                backend = "cmdstanr")
+
+GBR.logistic %>% 
+  prior_summary() 
+
+
+GBR.logistic %>% conditional_effects()
+
+```
+
+```{r}
+# quick test 
+
+GBR.form.test <- bf(collapse|trials(1000) ~
+                 scale(fishing_mortality) + 
+                 scale(total.reef.area.m2) + 
+                 scale(max.biomass.pm2) + 
+                 scale(average.biomass.pm2), 
+               family = binomial(link = "logit"))
+
+GBR.logistic.test <- brm(GBR.form.test, 
+                prior = priors1, 
+                iter = 18000, 
+                warmup = 800, 
+                thin = 10, 
+                cores = 3, 
+                chains = 3, 
+                save_all_pars = T, 
+                data = prob.outcomes.fix,
+                control = list(adapt_delta = 0.99,
+                               max_treedepth= 15),
+                refresh = 0, 
+                backend = "cmdstanr")
+
+mean(prob.outcomes.fix$fishing_mortality)
+
+
+ref_grid(GBR.logistic.test)
+
+summary(GBR.logistic, type = "response")
+
+inv_logit_scaled(75.85, 74.31, 77.40)
+inv_logit_scaled(x = -4.34, lb = -4.44, ub= -4.23)
+
+```
+
+
+
+```{r}
+GBR.logistic.2 %>% hypothesis("Intercept=0") %>% plot
+```
+
+```{r}
+params <- GBR.logistic %>% get_variables()
+```
+
+```{r}
+wch <- grepl("^b_.*|^sd_.*|^cor_.*", params, perl = T )
+params1 <- params[wch]
+```
+
+```{r}
+GBR.logistic$fit %>% stan_trace(params1)
+```
+
+```{r}
+GBR.logistic$fit %>% stan_ac()
+```
+
+```{r}
+GBR.logistic$fit %>% stan_rhat()
+```
+
+```{r}
+GBR.logistic$fit %>% stan_ess()
+```
+
+```{r}
+preds <- GBR.logistic %>% posterior_predict(nsamples = 250, summary = F)
+GBR.resids <- createDHARMa(simulatedResponse = t(preds), 
+                            observedResponse = prob.outcomes.fix$collapse, 
+                            fittedPredictedResponse = apply(preds, 2, median), 
+                            integerResponse = F)
+GBR.resids %>% plot(quantreg = F)
+```
+
+```{r}
+GBR.grid <- with(prob.outcomes.fix, list(fishing_mortality = modelr::seq_range(fishing_mortality, n = 1000)))
+newdata <- GBR.logistic %>% 
+  emmeans(~fishing_mortality, at = GBR.grid, type = "response") %>% 
+  as.data.frame()
+```
+
+```{r}
+GBR.grid.av <- with(prob.outcomes.fix, list(average.biomass.pm2 = modelr::seq_range(average.biomass.pm2, n = 1000)))
+newdata.av <- GBR.logistic %>% 
+  emmeans(~average.biomass.pm2, at = GBR.grid.av, type = "response") %>% 
+  as.data.frame()
+```
+
+```{r}
+GBR.grid.av <- with(prob.outcomes.fix, list(total.reef.area.m2 = modelr::seq_range(total.reef.area.m2, n = 1000)))
+newdata.av <- GBR.logistic %>% 
+  emmeans(~total.reef.area.m2, at = GBR.grid.av, type = "response") %>% 
+  as.data.frame()
+```
+
+```{r}
+GBR.fishing.mort <- newdata %>% 
+  ggplot(aes(fishing_mortality, prob)) + 
+  geom_line(size = 1.5) + 
+  geom_ribbon(aes(ymin = lower.HPD, ymax = upper.HPD ), 
+              alpha = 0.2) + 
+  theme_classic() + 
+  labs(y = "Probability of collapse", x = "Annual fishing mortality (t)") + 
+  scale_y_continuous(expand = c(0,0), breaks = c(0.25, 0.5, 0.75, 1)) +
+  scale_x_continuous(expand = c(0,0)) + 
+  theme(axis.text = element_text(colour = "black", size = 12), 
+        axis.title = element_text(size = 14)) + 
+  coord_cartesian(xlim = c(0, 26000), ylim = c(0, 1.05))
+GBR.fishing.mort
+```
+
+
+```{r}
+newdata.2 <- data.frame(fishing_mortality = c(0, 1, 1.5, 200, 1000, 14974.096))
+GBR.logistic %>% emmeans(~fishing_mortality, at = newdata.2, type = "response") %>% 
+  as.data.frame
+```
+
+## LD50
+
+```{r}
+LD50.data <- GBR.logistic %>% 
+  emmeans(~fishing_mortality, at = GBR.grid, type = "response") %>% 
+  #pairs() %>% 
+  regrid() %>% 
+  gather_emmeans_draws()
+LD50.data
+
+LD50.data %>% 
+  filter(.value > 0.49 & .value < 0.51) 
+
+```
+
+## First reach 1
+
+```{r}
+LD50.data %>% 
+  filter(.value > 0.99999999 & .value < 1) %>% 
+  mutate 
+
+```
+
+
+##### Cairns 
+
+```{r}
+
+prob.outcomes.fix.cairns <- prob.outcomes.cairns %>% 
+  #filter(fishing_mortality != 0) %>% 
+  mutate(fishing_mortality = as.numeric(fishing_mortality), 
+         total.reef.area.m2 = as.numeric(total.reef.area.m2), 
+         max.biomass.pm2 = as.numeric(max.biomass.pm2), 
+         average.biomass.pm2 = as.numeric(average.biomass.pm2))
+
+
+
+priors1 <- prior(normal(0, 1500), class = "Intercept") +
+  prior(normal(0,200000), class = "b")
+
+get_prior(collapse|trials(1000) ~
+                 scale(fishing_mortality) + 
+                 scale(total.reef.area.m2) + 
+                 scale(max.biomass.pm2) + 
+                 scale(average.biomass.pm2), 
+               family = binomial(link = "logit"), 
+          data = prob.outcomes.fix)
+
+#priors <- prior(normal(0, 3000), class = "Intercept") +
+#  prior(normal(0,1000000), class = "b")
+
+cairns.form <- bf(collapse|trials(1000) ~
+                 scale(fishing_mortality), 
+               family = binomial(link = "logit"))
+
+cairns.logistic <- brm(cairns.form, 
+                prior = priors1, 
+                iter = 18000, 
+                warmup = 4000, 
+                thin = 18, 
+                cores = 3, 
+                chains = 3, 
+                save_all_pars = T, 
+                data = prob.outcomes.fix.cairns,
+                control = list(adapt_delta = 0.99,
+                               max_treedepth= 15),
+                refresh = 0, 
+                backend = "cmdstanr")
+
+cairns.logistic %>% 
+  prior_summary() 
+
+
+cairns.logistic %>% conditional_effects()
+
+```
+```{r}
+preds <- cairns.logistic %>% posterior_predict(nsamples = 250, summary = F)
+cairns.resids <- createDHARMa(simulatedResponse = t(preds), 
+                            observedResponse = prob.outcomes.fix$collapse, 
+                            fittedPredictedResponse = apply(preds, 2, median), 
+                            integerResponse = F)
+cairns.resids %>% plot(quantreg = F)
+```
+```{r}
+params <- cairns.logistic %>% get_variables()
+```
+
+```{r}
+wch <- grepl("^b_.*|^sd_.*|^cor_.*", params, perl = T )
+params1 <- params[wch]
+```
+
+```{r}
+cairns.logistic$fit %>% stan_trace(params1)
+```
+
+```{r}
+cairns.logistic$fit %>% stan_ac()
+```
+
+```{r}
+cairns.logistic$fit %>% stan_rhat()
+```
+
+```{r}
+cairns.logistic$fit %>% stan_ess()
+```
+```{r}
+cairns.grid <- with(prob.outcomes.fix.cairns, list(fishing_mortality = modelr::seq_range(fishing_mortality, n = 1000)))
+newdata.cairns <- cairns.logistic %>% 
+  emmeans(~fishing_mortality, at = cairns.grid, type = "response") %>% 
+  as.data.frame()
+```
+
+```{r}
+cairns.grid <- with(prob.outcomes.fix.cairns, list(fishing_mortality = modelr::seq_range(fishing_mortality, n = 1000)))
+newdata.cairns <- cairns.logistic %>% 
+  emmeans(~fishing_mortality, at = cairns.grid, type = "response") %>% 
+  as.data.frame()
+```
+
+```{r}
+cairns.fishing.mort <- newdata.cairns %>% 
+  ggplot(aes(fishing_mortality, prob)) + 
+  geom_line(size = 1.5) + 
+  geom_ribbon(aes(ymin = lower.HPD, ymax = upper.HPD ), 
+              alpha = 0.2) + 
+  theme_classic() + 
+  labs(y = "Probability of collapse", x = "Annual fishing mortality (t)") + 
+  scale_y_continuous(expand = c(0,0), breaks = c(0.25, 0.5, 0.75, 1)) +
+  scale_x_continuous(expand = c(0,0)) + 
+  theme(axis.text = element_text(colour = "black", size = 12), 
+        axis.title = element_text(size = 14)) + 
+  coord_cartesian(xlim = c(0, 26000), ylim = c(0, 1.05))
+cairns.fishing.mort
+```
+
+```{r}
+newdata.cairns.2 <- data.frame(fishing_mortality = c(0, 1, 200, 201, 1000, 2268.8, 8296.25))
+cairns.logistic %>% emmeans(~fishing_mortality, at = newdata.cairns.2, type = "response")
+```
+
+### Patchwork
+
+```{r}
+GBR.fishing.mort + cairns.fishing.mort + labs(y = "") + plot_annotation(title = "GBR                                                                              Cairns") 
+
+ggsave("probability.fish.mort.GBR_cairns.pdf", width = 22, height = 12, units = "cm")
+  
+```
+
+
+```{r}
+packages.loaded <- (.packages())
+
+require(packages.loaded)
+
+```
+

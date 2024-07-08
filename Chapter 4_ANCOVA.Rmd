@@ -1,0 +1,623 @@
+---
+title: "ANCOVA"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/Users/jc627531/OneDrive - James Cook University/PhD/Analysis/LPS Coral Size Weight Analysis 2")
+```
+
+```{r, include=FALSE}
+library(tidyverse) 
+library(brms)
+#library(standist)   #for exploring distributions - unavailable??
+library(coda)       #for diagnostics
+library(bayesplot)  #for diagnostics
+library(ggmcmc)     #for MCMC diagnostics
+library(DHARMa)     #for residual diagnostics
+library(rstan)      #for interfacing with STAN
+library(emmeans)    #for marginal means etc
+library(broom)      #for tidying outputs
+library(tidybayes)  #for more tidying outputst
+library(ggeffects)  #for partial plots 
+library(broom.mixed)#for summarising models
+library(ggeffects)  #for partial effects plots
+library(tidybayes)
+library(modelr)
+library(patchwork)
+library(kableExtra)
+library(rstanarm)
+```
+
+```{r,include=FALSE}
+library(tidyverse)
+
+lps.data.all <- read_csv("Target_Spp_DxW.csv") %>% 
+  rename(species = SPECIES...5,
+         weight.g = WEIGHT.g...11) %>% 
+  mutate(species = recode(species, 
+                          "Cataphyllia jardinei" = "Catalaphyllia jardinei", 
+                          )) 
+```
+
+```{r, include=FALSE}
+lps.data.all %>% 
+  group_by(species) %>% 
+  summarise(n = n())
+```
+
+```{r,include=FALSE}
+
+lps.data.all.filt <- read_csv("Target_Spp_DxW.csv") %>% 
+  rename(species = SPECIES...5,
+         weight.g = WEIGHT.g...11) %>% 
+  mutate(species = recode(species, 
+                          "Cataphyllia jardinei" = "Catalaphyllia jardinei", 
+                          ), 
+         filter.var = ifelse(species == "Homophyllia australis" & STATE != "QLD", "null", species)) %>% 
+  filter(filter.var != "null") %>% 
+  select(-filter.var)
+```
+
+```{r, include=FALSE}
+lps.data.all.filt %>% 
+  group_by(species) %>% 
+  summarise(n = n())
+```
+
+```{r, include = FALSE}
+
+prior1 <- prior(normal(1.5, 0.8), nlpar = "b1", lb = 0) + 
+  prior(normal(0, 1.6), nlpar = "b2") + 
+  prior(normal(0.45, 0.04), nlpar = "b3", lb = 0) 
+
+
+
+lps.ancova <- brm(bf(weight.g ~ b1*b2^b3, 
+                          b1 ~ 1,
+                          b2 ~ DMAX.cm*species, 
+                          b3 ~ 1,
+                          nl = TRUE),
+                       data = lps.data.all.filt %>% 
+                    mutate(species=fct_relevel(species,c("Duncanopsammia axifuga", 
+                                                         "Homophyllia australis", 
+                                                         "Micromussa lordhowensis", 
+                                                         "Trachyphyllia geoffroyi", 
+                                                         "Catalaphyllia jardinei", 
+                                                         "Euphyllia glabrescens"))), 
+                       prior = prior1, 
+                       iter = 12000,  
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       file = "lps.ancova.classic",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+``` 
+
+bf(weight.g ~ b1*b2^b3, 
+                          b1 ~ species,
+                          s ~ species
+                          b2 ~ 1 + DMAX.cm * species, 
+                          b3 ~ 1 + species,
+                          nl = TRUE)
+
+
+b2 ~ DMAX.cm * (species:DMAX.cm),
+
+prior1 <- prior(normal(1.5, 0.8), nlpar = "b1", lb = 0) + 
+  prior(normal(0.5, 1), nlpar = "b2") +
+  prior(normal(0.45, 0.04), nlpar = "b3", lb = 0)
+  
+  
+  prior(normal(0, 1.6), nlpar = "b2") +
+
+```{r, include = FALSE}
+
+prior1 <- prior(normal(1.5, 0.8), nlpar = "b1", lb = 0) + 
+  prior(normal(0, 1.6), nlpar = "b2") + 
+  prior(normal(0.45, 0.04), nlpar = "b3", lb = 0) 
+
+
+
+lps.ancova.2 <- brm(bf(weight.g ~ b1*b2^b3, 
+                          b1 ~ 1,
+                          b2 ~ DMAX.cm*species*STATE, 
+                          b3 ~ 1,
+                          nl = TRUE),
+                       data = lps.data.all.filt %>% 
+                    mutate(species=fct_relevel(species,c("Duncanopsammia axifuga", 
+                                                         "Homophyllia australis", 
+                                                         "Micromussa lordhowensis", 
+                                                         "Trachyphyllia geoffroyi", 
+                                                         "Catalaphyllia jardinei", 
+                                                         "Euphyllia glabrescens"))), 
+                       prior = prior1, 
+                       iter = 12000,  
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       file = "lps.ancova.classic.rel.state",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+``` 
+
+```{r}
+plot(conditional_effects(lps.ancova), points = T)
+```
+
+```{r}
+bayes_R2(lps.ancova)
+```
+
+```{r}
+pp_check(lps.ancova, ndraws = 1000, type = "ecdf_overlay")
+```
+
+```{r}
+prior_summary(lps.ancova)
+```
+
+```{r}
+posterior::as_draws_rvars(lps.ancova$fit)
+```
+
+```{r}
+lps.ancova %>% get_variables()
+lps.ancova %>% hypothesis("b1_Intercept > 0") %>% plot(ignore_prior = F)
+
+```
+
+```{r}
+lps.ancova %>% hypothesis("b2_Intercept > 0") %>% plot(ignore_prior = F)
+```
+
+```{r}
+lps.ancova %>% hypothesis("b2_DMAX.cm > 0") %>% plot(ignore_prior = F)
+```
+
+```{r}
+lps.ancova %>% hypothesis("b3_Intercept > 0") %>% plot(ignore_prior = F)
+```
+
+```{r}
+lps.ancova %>% 
+  emmeans(~DMAX.cm*species, nlpar = "b2", type = "response") %>% 
+  pairs() %>% 
+  #as.data.frame() %>% 
+  plot() +
+  theme_classic() + 
+  geom_vline(xintercept = 0, linetype = "dashed")
+  
+  
+  #ggplot(aes(y = contrast, x = estimate)) +
+  #stat_halfeye(point_interval = median_hdci, .width = 0.95) +
+  #geom_vline(xintercept = 0, linetype = "dashed")
+
+
+EMM <- lps.ancova %>%
+  emmeans(~species, nlpar = "b2", type = "response")
+CON <- contrast(EMM)
+draws <- coda::as.mcmc(CON) 
+  
+#as.data.frame(draws)
+
+
+map_df(draws, as.data.frame) %>% 
+  gather(key = species, value = effect) %>% 
+  mutate(species = str_remove(species,"contrast "), 
+         species = str_remove(species," effect")) %>% 
+  group_by(species) %>% 
+  summarise(P=sum(effect>1)/n())
+  
+  
+
+
+library("bssm")
+
+bssm::as.data.frame.mcmc
+  
+```
+
+```{r}
+map_df(draws, as.data.frame)
+
+lps.ancova %>% 
+  emmeans(~species, nlpar = "b2") %>% 
+  pairs() %>% 
+  #as.data.frame() %>% 
+  plot() +
+  theme_classic() + 
+  geom_vline(xintercept = 1, linetype = "dashed")
+  
+  
+  #ggplot(aes(y = contrast, x = estimate)) +
+  #stat_halfeye(point_interval = median_hdci, .width = 0.95) +
+  #geom_vline(xintercept = 0, linetype = "dashed")
+
+
+EMM <- lps.ancova %>% 
+  emmeans(~species, nlpar = "b2", 
+          transform = "log", type = "response"
+          ) %>% 
+  pairs()
+#CON <- contrast(EMM)
+draws <- coda::as.mcmc(EMM) 
+  
+#as.data.frame(draws)
+
+
+lps.ancova %>% 
+  emmeans(~species, nlpar = "b2") %>% 
+  pairs() %>% 
+  #as.data.frame() %>% 
+  plot() +
+  theme_classic() + 
+  geom_vline(xintercept = 0, linetype = "dashed")
+
+
+lps.ancova %>% 
+  emmeans(~species, nlpar = "b2") %>% 
+  pairs() %>% 
+  as.data.frame()
+
+
+
+lps.ancova %>% 
+  emmeans(~species, nlpar = "b2") %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  summarise(P=sum(Fit>0)/n())
+
+```
+
+```{r}
+hdci <- lps.ancova %>% 
+  emmeans(~species, nlpar = "b2") %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  median_hdci() %>% 
+  as.data.frame()
+  
+
+p.vals <- lps.ancova %>% 
+  emmeans(~species, nlpar = "b2") %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  summarise(P=sum(Fit>0)/n()) %>% 
+  as.data.frame()
+
+contrasts.data <- hdci %>% left_join(p.vals)
+```
+
+
+```{r}
+
+contrasts.data.2 <- contrasts.data %>% 
+  mutate(contrast = str_replace(contrast, c("Catalaphyllia jardinei"), c("C. jardinei")), 
+         contrast = str_replace(contrast, c("Duncanopsammia axifuga"), c("D. axifuga")),
+         contrast = str_replace(contrast, c("Euphyllia glabrescens"), c("E. glabrescens")), 
+         contrast = str_replace(contrast, c("Homophyllia australis"), c("H. australis")), 
+         contrast = str_replace(contrast, c("Micromussa lordhowensis"), c("M. lordhowensis")), 
+         contrast = str_replace(contrast, c("Trachyphyllia geoffroyi"), c("T. geoffroyi"))) 
+
+contrasts.plot <- contrasts.data.2 %>% 
+  ggplot(aes(x = .value, y = contrast, label = P)) +
+  geom_vline(xintercept = 0, alpha = 0.6) +
+  geom_segment(aes(x=.value.lower, y=contrast, xend=.value.upper, yend=contrast), color="royalblue2", size=3, alpha = 0.95) + 
+   geom_point(size = 2) +
+  geom_text(aes(label = round(P, digits = 2)), vjust = -0.60, hjust = 0.5, size =5) +
+  theme_classic() +
+  theme(axis.text.y = element_text(colour = "black", size = 14, face = "italic"),
+        axis.text.x = element_text(colour = "black", size = 14),
+        axis.title = element_text(size = 18), 
+        plot.margin = unit(c(1.5,1,1,1), "cm")) +
+  labs(y = "Species contrast", x = "Estimate") 
+contrasts.plot 
+
+ggsave("contrast.plot.pdf", width = 8, height = 8)
+
+ggresponse2
+
+```
+
+```{r}
+lps.ancova %>% get_variables()
+
+lps.ancova %>%
+hypothesis("b2_speciesEuphylliaglabrescens > b2_speciesTrachyphylliageoffroyi", )
+```
+
+
+```{r}
+half.eye.ancova.labels <- lps.ancova %>% 
+  gather_draws(`b_b2_species.*`, regex = T) %>% 
+  mutate(.variable = dplyr::recode(as.factor(.variable), 
+                            b_b2_speciesHomophylliaaustralis = "Homophyllia australis",
+                            b_b2_speciesMicromussalordhowensis = "Micromussa lordhowensis", 
+                            b_b2_speciesTrachyphylliageoffroyi = "Trachyphyllia geoffroyi", 
+                            b_b2_speciesCatalaphylliajardinei = "Catalaphyllia jardinei", 
+                            b_b2_speciesEuphylliaglabrescens = "Euphyllia glabrescens", 
+                          )) %>% 
+  compare_levels(.value, by = .variable)  %>% 
+  group_by(.variable) %>% 
+  summarise(P=sum(.value>1)/n())
+```
+
+
+```{r}
+lps.ancova %>% 
+  gather_draws(`b_b2_.*`, regex = T) %>% 
+  filter(!str_detect(.variable, "DMAX")) %>% 
+  #median_hdci(intercept)
+  mutate(.variable = dplyr::recode(as.factor(.variable), 
+                            b_b2_speciesHomophylliaaustralis = "Homophyllia australis",
+                            b_b2_speciesMicromussalordhowensis = "Micromussa lordhowensis", 
+                            b_b2_speciesTrachyphylliageoffroyi = "Trachyphyllia geoffroyi", 
+                            b_b2_speciesCatalaphylliajardinei = "Catalaphyllia jardinei", 
+                            b_b2_speciesEuphylliaglabrescens = "Euphyllia glabrescens", 
+                            b_b2_Intercept = "Duncanopsammia axifuga"
+                          )) %>% 
+  compare_levels(.value, by = .variable)  %>% 
+  mutate(Prob= round(sum(.value>0)/n(), 2), 
+         #.value.trans= exp(.value)
+         ) %>% 
+  ggplot(aes(y = .variable, x = .value)) +
+  stat_halfeye(point_interval = median_hdci, .width = 0.95) +
+  stat_pointinterval(geom = "label", aes(label = Prob), 
+                     .width = .5,  # set to a scalar to draw only one label instead of two
+    position = position_dodge(width = 1),
+    size = 3.5) +
+  geom_vline(xintercept = 0, linetype = "dashed")
+```
+
+
+```{r}
+lps.data.all.filt %>% 
+                    mutate(species=fct_relevel(species,c("Duncanopsammia axifuga", 
+                                                         "Homophyllia australis", 
+                                                         "Micromussa lordhowensis", 
+                                                         "Trachyphyllia geoffroyi", 
+                                                         "Catalaphyllia jardinei", 
+                                                         "Euphyllia glabrescens"))) %>%
+  data_grid(species) %>%
+  add_linpred_draws(lps.ancova)
+```
+
+
+```{r}
+lps.ancova %>% 
+  gather_draws(`b_b2_species.*`, regex = T) %>% 
+  mutate(.variable = dplyr::recode(as.factor(.variable), 
+                            b_b2_speciesHomophylliaaustralis = "Homophyllia australis",
+                            b_b2_speciesMicromussalordhowensis = "Micromussa lordhowensis", 
+                            b_b2_speciesTrachyphylliageoffroyi = "Trachyphyllia geoffroyi", 
+                            b_b2_speciesCatalaphylliajardinei = "Catalaphyllia jardinei", 
+                            b_b2_speciesEuphylliaglabrescens = "Euphyllia glabrescens", 
+                          )) %>% 
+  compare_levels(.value, by = .variable)  %>% 
+  group_by(.variable) %>% 
+  summarise(P=sum(.value>1)/n())
+
+```
+
+
+
+```{r, include = FALSE}
+
+
+prior1 <- prior(normal(1.5, 0.8), nlpar = "b1", lb = 0) + 
+  prior(normal(0, 2.4), nlpar = "b2") + 
+  prior(normal(0.45, 0.04), nlpar = "b3", lb = 0) 
+
+
+
+lps.ancova.sp <- brm(bf(weight.g ~ b1*b2^b3, 
+                          b1 ~ 1,
+                          b2 ~ DMAX.cm*species, 
+                          b3 ~ 1,
+                          nl = TRUE),
+                       data = lps.data.all.filt, 
+                       prior = prior1, 
+                       iter = 12000,  
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       file = "lps.ancova.classic.prior2",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+
+
+``` 
+
+```{r}
+lps.ancova.sp %>% 
+  emmeans(~species, nlpar = "b2") %>% 
+  pairs() 
+```
+
+
+```{r}
+plot(conditional_effects(lps.ancova.sp), points = T)
+```
+
+
+```{r}
+bayes_R2(lps.ancova.sp)
+```
+
+```{r}
+pp_check(lps.ancova.sp, ndraws = 1000, type = "ecdf_overlay")
+```
+
+```{r}
+prior_summary(lps.ancova.sp)
+```
+
+```{r}
+posterior::as_draws_rvars(lps.ancova.sp$fit)
+```
+
+```{r}
+lps.ancova.sp %>% get_variables()
+
+lps.ancova.sp %>% hypothesis("b1_Intercept > 0") %>% plot(ignore_prior = F)
+
+```
+
+```{r}
+lps.ancova.sp %>% hypothesis("b2_Intercept > 0") %>% plot(ignore_prior = F)
+```
+
+```{r}
+lps.ancova.sp %>% hypothesis("b3_Intercept > 0") %>% plot(ignore_prior = F)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+library(car)       #for regression diagnostics
+library(broom)     #for tidy output
+library(ggfortify) #for model diagnostics
+#library(sjPlot)    #for outputs
+library(knitr)     #for kable
+library(effects)   #for partial effects plots
+library(emmeans)   #for estimating marginal means
+library(MASS)      #for glm.nb
+library(MuMIn)     #for AICc
+library(tidyverse) #for data wrangling
+library(brms)
+library(tidybayes)
+library(bayesplot)
+library(broom.mixed)
+library(rstan)
+library(patchwork)
+library(DHARMa)
+#library(standist)   #for visualizing distributions
+library(rstanarm)
+library(ggeffects)
+library(DHARMa)
+```
+
+```{r}
+lps.ancova %>% 
+  emmeans(~b3, type = "link") %>%
+   regrid() %>% 
+  pairs() 
+```
+
+
+
+
+
+
+```{r, include = FALSE}
+
+prior1 <- prior(normal(1.5, 0.8), nlpar = "b1", lb = 0) + 
+  prior(normal(0.45, 0.04), nlpar = "b2", lb = 0) 
+
+
+
+lps.ancova <- brm(bf(weight.g ~ b1*DMAX.cm^b2, 
+                          b1 ~ (1|species),
+                          b2 ~ (1|species),
+                          nl = TRUE),
+                       data = lps.data.all.filt, 
+                       prior = prior1, 
+                       iter = 12000, 
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       #file = "lps.ancova",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+``` 
+
+```{r}
+plot(conditional_effects(lps.ancova), points = T)
+```
+
+```{r}
+bayes_R2(lps.ancova)
+```
+
+```{r}
+pp_check(lps.ancova, ndraws = 1000, type = "ecdf_overlay")
+```
+
+```{r}
+prior_summary(lps.ancova)
+```
+
+```{r}
+posterior::as_draws_rvars(lps.ancova$fit)
+```
+
+```{r}
+lps.ancova %>% get_variables()
+lps.ancova %>% hypothesis("b1_Intercept > 0") %>% plot(ignore_prior = F)
+
+```
+
+```{r}
+lps.ancova %>% hypothesis("b2_Intercept > 0") %>% plot(ignore_prior = F)
+```
+
+```{r}
+lps.ancova %>% hypothesis("b2_DMAX.cm > 0") %>% plot(ignore_prior = F)
+```
+
+```{r}
+get_variables(lps.ancova)
+
+pairs(lps.ancova)
+
+lps.ancova %>% 
+  spread_draws(b_b1_speciesDuncanopsammiaaxifuga)
+
+```
+

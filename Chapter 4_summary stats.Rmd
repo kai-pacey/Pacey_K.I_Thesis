@@ -1,0 +1,611 @@
+---
+title: "Summary statistics"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/Users/jc627531/OneDrive - James Cook University/PhD/Analysis/LPS Coral size-weight analysis/Data")
+```
+
+```{r, include=FALSE}
+library(tidyverse) 
+library(brms)
+#library(standist)   #for exploring distributions - unavailable??
+library(coda)       #for diagnostics
+library(bayesplot)  #for diagnostics
+library(ggmcmc)     #for MCMC diagnostics
+library(DHARMa)     #for residual diagnostics
+library(rstan)      #for interfacing with STAN
+library(emmeans)    #for marginal means etc
+library(broom)      #for tidying outputs
+library(tidybayes)  #for more tidying outputst
+library(ggeffects)  #for partial plots #for data wrangling etc
+library(broom.mixed)#for summarising models
+library(ggeffects)  #for partial effects plots
+library(tidybayes)
+library(modelr)
+library(patchwork)
+library(kableExtra)
+library(plotrix)
+```
+
+```{r,include=FALSE}
+library(tidyverse)
+
+lps.data.all <- read_csv("Target_Spp_DxW.csv") %>% 
+  rename(species = SPECIES...5,
+         weight.g = WEIGHT.g...11) %>% 
+  mutate(species = recode(species, 
+                          "Cataphyllia jardinei" = "Catalaphyllia jardinei", 
+                          )) 
+```
+
+```{r, include=FALSE}
+lps.data.all %>% 
+  group_by(species) %>% 
+  summarise(n = n())
+```
+
+```{r,include=FALSE}
+
+lps.data.all.filt <- read_csv("Target_Spp_DxW.csv") %>% 
+  rename(species = SPECIES...5,
+         weight.g = WEIGHT.g...11) %>% 
+  mutate(species = recode(species, 
+                          "Cataphyllia jardinei" = "Catalaphyllia jardinei", 
+                          ), 
+         filter.var = ifelse(species == "Homophyllia australis" & STATE != "QLD", "null", species)) %>% 
+  filter(filter.var != "null") %>% 
+  select(-filter.var)
+```
+
+```{r, include=FALSE}
+lps.data.all.filt %>% 
+  group_by(species) %>% 
+  summarise(n = n())
+```
+
+```{r}
+library(lubridate)
+
+lps.data.all.filt %>% 
+  mutate(date = as_date(DATE)) %>% 
+  summarise(min = min(date), 
+            max = max(date))
+```
+
+
+```{r}
+lps.data.all.filt %>% 
+  group_by(STATE, LOCATION) %>% 
+  summarise(n = n(), 
+            ) %>% 
+  arrange(species, n)
+```
+
+```{r}
+lps.data.all.filt %>% 
+  group_by(species, STATE) %>% 
+  summarise(n = n(), 
+            #mean.weight = mean(weight.g), 
+            #weight.se = std.error(weight.g),
+            #min.weight = min(weight.g), 
+            #max.weight = max(weight.g),
+            mean.dia = mean(DMAX.cm), 
+            dia.se = std.error(DMAX.cm), 
+            min.dia = min(DMAX.cm), 
+            max.dia = max(DMAX.cm)) %>% 
+  arrange(species, -n)
+```
+
+
+
+```{r}
+
+library(plotrix)
+
+lps.data.all.filt %>% 
+  summarise(n = n(), 
+            mean.weight = mean(weight.g), 
+            weight.se = std.error(weight.g),
+            min.weight = min(weight.g), 
+            max.weight = max(weight.g),
+            mean.dia = mean(DMAX.cm), 
+            dia.se = std.error(DMAX.cm), 
+            min.dia = min(DMAX.cm), 
+            max.dia = max(DMAX.cm)) %>% 
+mutate_if(is.numeric, ~round(., 2))
+```
+
+
+```{r}
+lps.data.all.filt %>% 
+  group_by(species, STATE) %>% 
+  summarise(mean.weight = mean(weight.g), 
+            weight.se = std.error(weight.g),
+            min.weight = min(weight.g), 
+            max.weight = max(weight.g),
+            mean.dia = mean(DMAX.cm), 
+            dia.se = std.error(DMAX.cm),
+            median = median(DMAX.cm),
+            min.dia = min(DMAX.cm), 
+            max.dia = max(DMAX.cm)) %>% 
+mutate_if(is.numeric, ~round(., 2)) #%>% 
+ # arrange(-mean.dia)
+
+
+
+
+
+```
+
+### Bayesian ANOVA  
+
+
+```{r}
+standist::visualize("normal(0,10))", xlim=c(-50, 50))
+```
+
+
+```{r}
+
+
+prior.ANOVA.w <- prior(normal(0,10), class = "Intercept") + 
+  prior(normal(0,1), class = "b")
+
+
+
+lps.ancova.weight <- brm(bf(weight.g ~ species*(STATE/species)),
+                       data = lps.data.all.filt, 
+                       prior = prior.ANOVA.w, 
+                       iter = 12000,  
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       file = "lps.weight.ANCOVA",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+
+
+```
+
+```{r}
+plot(conditional_effects(lps.ancova.weight), points = T)
+```
+
+
+```{r}
+bayes_R2(lps.ancova.weight)
+```
+
+```{r}
+pp_check(lps.ancova.weight, ndraws = 1000, type = "ecdf_overlay")
+```
+
+```{r}
+prior_summary(lps.ancova.weight)
+```
+
+```{r}
+posterior::as_draws_rvars(lps.ancova.weight$fit)
+```
+
+```{r}
+lps.ancova.weight %>% get_variables()
+
+lps.ancova.weight %>% prior_summary()
+
+lps.ancova.weight %>% hypothesis("speciesDuncanopsammiaaxifuga > 0") %>% plot(ignore_prior = F)
+
+```
+
+```{r}
+lps.ancova.weight %>% hypothesis("Intercept > 0") %>% plot(ignore_prior = F)
+```
+
+```{r}
+lps.ancova.weight %>% hypothesis("b3_Intercept > 0") %>% plot(ignore_prior = F)
+```
+
+##### State comparison 
+
+```{r}
+
+duncan.weight <- lps.data.all.filt %>% 
+  filter(species == "Duncanopsammia axifuga") %>% 
+  mutate(STATE = as.factor(STATE))
+
+
+prior.ANOVA.w <- prior(normal(0,10), class = "Intercept") + 
+  prior(normal(0,1), class = "b")
+
+
+
+lps.ancova.weight.duncanop <- brm(bf(weight.g ~ STATE),
+                       data = lps.data.all.filt %>% 
+                         filter(species == "Duncanopsammia axifuga"), 
+                       prior = prior.ANOVA.w, 
+                       iter = 12000,  
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       file = "lps.weight.ANOVA.duncsnop",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+
+lps.ancova.weight.duncanop %>%   
+  emmeans(~STATE) %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  summarise(P=sum(Fit>0)/n())
+
+```
+
+```{r}
+lps.ancova.weight.duncanop  %>% prior_summary()
+
+lps.ancova.weight.duncanop  %>% hypothesis("STATEWA > 0") %>% plot(ignore_prior = F)
+```
+
+```{r}
+prior.ANOVA.w <- prior(normal(0,10), class = "Intercept") + 
+  prior(normal(0,1), class = "b")
+
+
+lps.ancova.dia.duncanop <- brm(bf(DMAX.cm ~ STATE),
+                       data = lps.data.all.filt %>% 
+                         filter(species == "Duncanopsammia axifuga"), 
+                       prior = prior.ANOVA.w, 
+                       iter = 12000,  
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       file = "lps.dia.ANOVA.duncsnop",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+
+lps.ancova.dia.duncanop %>%   
+  emmeans(~STATE) %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  summarise(P=sum(Fit>0)/n())
+```
+
+
+```{r}
+standist::visualize("normal(0,10))", xlim=c(-5, 10))
+```
+
+```{r}
+
+
+prior.ANOVA.w <- prior(normal(0,10), class = "Intercept") + 
+  prior(normal(0,1), class = "b")
+
+
+
+lps.ancova.weight.euph <- brm(bf(weight.g ~ STATE),
+                       data = lps.data.all.filt %>% 
+                         filter(species == "Euphyllia glabrescens"), 
+                       prior = prior.ANOVA.w, 
+                       iter = 12000,  
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       file = "lps.weight.ANOVA.euph",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+
+lps.ancova.weight.euph %>%   
+  emmeans(~STATE) %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  summarise(P=sum(Fit>0)/n())
+
+```
+
+```{r}
+lps.ancova.weight.euph  %>% prior_summary()
+
+lps.ancova.weight.euph  %>% hypothesis("STATEWA > 0") %>% plot(ignore_prior = F)
+```
+
+```{r}
+prior.ANOVA.w <- prior(normal(0,10), class = "Intercept") + 
+  prior(normal(0,1), class = "b")
+
+
+
+lps.ancova.dia.euph <- brm(bf(DMAX.cm ~ STATE),
+                       data = lps.data.all.filt %>% 
+                         filter(species == "Euphyllia glabrescens"), 
+                       prior = prior.ANOVA.w, 
+                       iter = 12000,  
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       file = "lps.dia.ANOVA.euph",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+
+lps.ancova.dia.euph %>%   
+  emmeans(~STATE) %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  summarise(P=sum(Fit>0)/n())
+```
+
+
+```{r}
+
+
+prior.ANOVA.w <- prior(normal(0,10), class = "Intercept") + 
+  prior(normal(0,1), class = "b")
+
+
+
+lps.ancova.weight.trachy <- brm(bf(weight.g ~ STATE),
+                       data = lps.data.all.filt %>% 
+                         filter(species == "Trachyphyllia geoffroyi"), 
+                       prior = prior.ANOVA.w, 
+                       iter = 12000,  
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       file = "lps.weight.ANOVA.trachy",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+
+lps.ancova.weight.trachy %>%   
+  emmeans(~STATE) %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  summarise(P=sum(Fit>0)/n())
+
+```
+
+```{r}
+
+
+prior.ANOVA.w <- prior(normal(0,10), class = "Intercept") + 
+  prior(normal(0,1), class = "b")
+
+
+
+lps.ancova.dia.trachy <- brm(bf(DMAX.cm ~ STATE),
+                       data = lps.data.all.filt %>% 
+                         filter(species == "Trachyphyllia geoffroyi"), 
+                       prior = prior.ANOVA.w, 
+                       iter = 12000,  
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       file = "lps.dia.ANOVA.trachy",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+
+lps.ancova.dia.trachy %>%   
+  emmeans(~STATE) %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  summarise(P=sum(Fit>0)/n())
+
+```
+
+##### scratch
+```{r}
+lps.ancova.weight %>% 
+  emmeans(~species) %>% 
+  pairs() 
+
+anova.growth.form.em <- emmeans(model.2.lognorm, pairwise~ growth.form.new)$contrast %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value)
+
+
+
+
+
+
+lps.ancova.weight %>% 
+  emmeans(pairwise~species)$contrast
+
+
+
+
+
+View(anova.region.em %>%  
+       group_by(contrast) %>% 
+       summarise(P=sum(Fit>0)/n())) 
+
+lps.ancova.weight %>% 
+  emmeans(~species) %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  summarise(P=sum(Fit>0)/n())
+
+
+
+
+#%>% 
+ # tidy_draws() %>% 
+  #as.data.frame()
+```
+```{r}
+lps.ancova.weight %>% 
+  emmeans(~species) %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  summarise(P=sum(Fit>0)/n())
+```
+
+
+
+```{r}
+
+
+prior.ANOVA.w <- prior(normal(0,10), class = "Intercept") + 
+  prior(normal(0,1), class = "b")
+
+
+
+lps.ancova.dia <- brm(bf(DMAX.cm ~ species*STATE),
+                       data = lps.data.all.filt, 
+                       prior = prior.ANOVA.w, 
+                       iter = 12000,  
+                       warmup = 5000,
+                       thin = 12, 
+                       cores = 4,
+                       family = lognormal(),
+                       #control = list(adapt_delta = 0.99,
+                       #               max_treedepth = 12), 
+                       #file = "lps.dia.ANCOVA",
+                       sample_prior = "yes",
+                       save_all_pars = T, 
+                       seed = 1234, 
+                       refresh = F
+)
+
+
+```
+
+```{r}
+plot(conditional_effects(lps.ancova.dia), points = T)
+```
+
+
+```{r}
+bayes_R2(lps.ancova.weight)
+```
+
+```{r}
+pp_check(lps.ancova.dia, ndraws = 1000, type = "ecdf_overlay")
+```
+
+```{r}
+prior_summary(lps.ancova.dia)
+```
+
+```{r}
+posterior::as_draws_rvars(lps.ancova.weight$fit)
+```
+
+```{r}
+lps.ancova.dia %>% get_variables()
+
+lps.ancova.dia %>% prior_summary()
+
+lps.ancova.dia %>% hypothesis("speciesDuncanopsammiaaxifuga > 0") %>% plot(ignore_prior = F)
+
+```
+
+```{r}
+lps.ancova.weight %>% hypothesis("Intercept > 0") %>% plot(ignore_prior = F)
+```
+
+```{r}
+lps.ancova.weight %>% hypothesis("b3_Intercept > 0") %>% plot(ignore_prior = F)
+```
+
+```{r}
+lps.ancova.weight %>% 
+  emmeans(~species*(species|STATE)) %>% 
+  pairs() 
+
+
+
+
+
+#%>% 
+  #ggplot(aes(y = .variable, x = .value)) +
+  #stat_halfeye(point_interval = median_hdci, .width = 0.95) +
+  #geom_vline(xintercept = 0, linetype = "dashed")
+
+#%>% 
+ # tidy_draws() %>% 
+  #as.data.frame()
+```
+
+```{r}
+lps.ancova.weight %>%   
+  emmeans(~species*STATE) %>% 
+  pairs() %>% 
+  gather_emmeans_draws() %>% 
+  mutate(Fit = .value) %>% 
+  group_by(contrast) %>% 
+  summarise(P=sum(Fit>0)/n())
+```
+
+##### Checking % within comparing transects to weight sample
+
+```{r}
+lps.data.all.filt %>%  
+  filter(species == "Catalaphyllia jardinei") %>% 
+  mutate(count == ifelse( DMAX.cm))
+```
+
+
+
+
